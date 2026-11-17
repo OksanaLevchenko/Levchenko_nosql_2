@@ -1,19 +1,14 @@
 # NoSQL Homework 2 — Scientific Paper Search with Pinecone
 
-## Project overview
+## What I did
 
-In this project I used the Cornell arXiv metadata dataset to build a small scientific-paper search system. I prepared 10,000 paper records, generated text embeddings, uploaded them to Pinecone, compared different similarity metrics, and tested two ways of splitting long abstracts into chunks.
+For this homework I made a small search project using scientific articles from arXiv. I worked with 10,000 papers, made embeddings for their titles and abstracts, uploaded them to Pinecone, and tried different ways to search. I also split long abstracts into smaller chunks and compared the results.
 
-The project follows the required parts of the homework. The hybrid BM25 + vector search part was optional and was not implemented.
+I completed Parts 1–4 and 6. I skipped Part 5 (hybrid search) because it was marked as optional in the assignment.
 
-## Tools
+I used Python, pandas, NumPy, PyArrow, SentenceTransformers, the `allenai/specter2_base` model, and Pinecone Starter.
 
-- Python 3.12, pandas, NumPy, PyArrow, tqdm
-- Pinecone (managed vector database)
-- `sentence-transformers` with `allenai/specter2_base`
-- Kaggle arXiv metadata dataset
-
-## Project structure
+## Files and how to run
 
 ```text
 Levchenko_nosql_2/
@@ -22,23 +17,24 @@ Levchenko_nosql_2/
 │   ├── 02_embed.py
 │   ├── 03_load_to_pinecone.py
 │   ├── 04_search.py
-│   └── 05_chunking.py
+│   ├── 05_chunking.py
+│   └── test_pinecone.py
 ├── requirements.txt
 ├── .gitignore
 └── README.md
 ```
 
-The downloaded `arxiv.zip`, local `data/` and `embeddings/` folders, `.venv/`, and `.env` are not committed to Git. They must be created locally to reproduce the project.
+The dataset, `.env`, `data/`, `embeddings/`, and `.venv/` are local files and are ignored by Git. I did not upload my Pinecone API key or the large dataset to GitHub.
 
-## How to run the project
+To run the project from the beginning:
 
-1. Create a **Pinecone Starter** account and get an API key. Create a `.env` file in the project root:
+1. Create a free [Pinecone account](https://www.pinecone.io/) and get an API key. Make a `.env` file in the project folder:
 
    ```dotenv
    PINECONE_API_KEY=YOUR_API_KEY_HERE
    ```
 
-2. Set up Python and install the packages:
+2. Create the Python environment and install the packages:
 
    ```bash
    python3 -m venv .venv
@@ -46,9 +42,9 @@ The downloaded `arxiv.zip`, local `data/` and `embeddings/` folders, `.venv/`, a
    python -m pip install -r requirements.txt
    ```
 
-3. Download the **Cornell University arXiv** dataset from [Kaggle](https://www.kaggle.com/datasets/Cornell-University/arxiv). Place the downloaded archive in the project root as `arxiv.zip`. To save disk space, `01_prepare_data.py` reads the `.json` file directly from the ZIP without extracting it.
+3. Download the [Cornell University arXiv metadata dataset](https://www.kaggle.com/datasets/Cornell-University/arxiv). Put `arxiv.zip` in the project folder. My first script reads the JSON file **inside the ZIP**, so you don't need to unzip it. I did this because my Mac was almost out of storage.
 
-4. Run the scripts **from the project root and in this order**:
+4. Run the scripts in this order, from the project folder:
 
    ```bash
    python scripts/01_prepare_data.py
@@ -58,23 +54,17 @@ The downloaded `arxiv.zip`, local `data/` and `embeddings/` folders, `.venv/`, a
    HF_HUB_DISABLE_IMPLICIT_TOKEN=1 python scripts/05_chunking.py
    ```
 
-   I used `HF_HUB_DISABLE_IMPLICIT_TOKEN=1` because my machine had an expired Hugging Face token. It allows fetching this public model without sending the old token.
+I added `HF_HUB_DISABLE_IMPLICIT_TOKEN=1` because I got an error from an expired Hugging Face token on my Mac. It allowed me to load the public model. The Pinecone scripts create the indexes if needed. They use 768 dimensions and the `cosine` metric.
 
-5. Expected Pinecone indexes: `arxiv-papers`, `arxiv-chunks-fixed`, and `arxiv-chunks-semantic`. They use **768 dimensions** and the **cosine** metric. The index-creation scripts create indexes if necessary.
+## Part 1 — Data and embeddings
 
-**Security:** Never commit `.env` or actual API keys. The dataset and embeddings are excluded because they are downloaded or generated locally.
+### 1.1 Preparing the papers
 
----
+I read the first 10,000 valid records from arXiv. I skipped articles without a title or abstract. For each paper I kept its ID, title, abstract, authors, publication year, and main category. I used the date of the first arXiv version for the year, not the last update date.
 
-## Part 1 — Data preparation, tools, and embeddings
+The file created by the script is `data/arxiv_subset.parquet`.
 
-### 1.1 Dataset preparation
-
-I read the arXiv metadata JSONL file and selected the first **10,000 valid papers** with both a title and an abstract. For each paper, I saved the arXiv ID, title, abstract, authors, first-version publication year, and primary category.
-
-The year comes from the first version's creation date, not the later update date. I saved the prepared data to `data/arxiv_subset.parquet`.
-
-Example from the output:
+One example from the output was:
 
 ```text
 id: 0704.0001
@@ -85,45 +75,51 @@ category: hep-ph
 Saved to: data/arxiv_subset.parquet
 ```
 
-This subset contains early arXiv records from **2007**, which later affected the date-filtered searches. It is not a representative sample of recent research.
+Later I found out that the first 10,000 papers are from 2007. That affected one of my search filters in Part 3.
 
-### 1.2 Why Pinecone instead of Qdrant or Chroma?
+### 1.2 Why I used Pinecone instead of Qdrant or Chroma
 
-**Pinecone** is a managed vector database. I chose it because I wanted to focus on vectors and search without operating my own database server. Its hosted service is convenient, although it is proprietary and has usage and plan limits. It is a good fit when I want a managed service with minimal infrastructure work.
+**Pinecone:** It runs as a managed cloud service. I didn't need to install or manage a vector database server, so it was the easiest choice for this homework. It is proprietary, and I have to work within the limits of the plan. I would use it when I want a hosted service and don't want to manage the servers myself.
 
-**Qdrant** has an Apache 2.0 open-source engine and can be self-hosted or used as a managed cloud service. It is a good option when I need more deployment control, metadata filtering, and a production vector search service. Self-hosting also means being responsible for monitoring, scaling, and maintenance.
+**Qdrant:** Its database engine is open source (Apache 2.0). I could run it on my own machine or server, or use its hosted cloud service. I would choose it when I need more control over how the database is deployed. But if I host it myself, I also need to maintain it.
 
-**Chroma** is also open source under Apache 2.0 and supports local, persistent, server, and cloud modes. I would choose it for a small prototype or experiments because the Python integration is simple. For a large production workload, I would benchmark its server/cloud deployment and operational needs rather than assuming it will be faster or slower than the others.
+**Chroma:** This is also open source (Apache 2.0). It is easy to start with locally in Python, and there are server/cloud options too. I would use it for a small prototype or for quickly trying an embedding idea.
 
-Performance depends on data size, indexing configuration, filters, hardware, and deployment. I did not run a performance benchmark between these three databases, so I cannot claim one is always fastest.
+I didn't run performance benchmarks between these three databases, so I can't say one is always faster. Speed depends on things like vector count, hardware, filtering, and index setup.
 
-Sources: [Pinecone pricing](https://www.pinecone.io/pricing/), [Qdrant repository](https://github.com/qdrant/qdrant), [Chroma repository](https://github.com/chroma-core/chroma).
+Sources: [Pinecone](https://www.pinecone.io/pricing/), [Qdrant](https://github.com/qdrant/qdrant), [Chroma](https://github.com/chroma-core/chroma).
 
-### Why SPECTER2 instead of all-MiniLM-L6-v2?
+### Why SPECTER2 and not all-MiniLM-L6-v2?
 
-I chose `allenai/specter2_base` because it was developed specifically for **scientific documents**. According to the [Hugging Face model card](https://huggingface.co/allenai/specter2_base), its base model is trained using citation relationships between research papers. SPECTER2 also has task-specific adapters for classification, regression, retrieval/proximity, and ad-hoc search. This makes it a more domain-focused starting point than the general-purpose `all-MiniLM-L6-v2` model.
+I used `allenai/specter2_base` because this model was made for scientific papers. Its [Hugging Face model card](https://huggingface.co/allenai/specter2_base) describes training using citation links between scientific papers. The SPECTER2 project also provides adapters for different tasks, including classification and retrieval. `all-MiniLM-L6-v2` is a general-purpose embedding model. For this homework, I wanted a model connected to scientific text.
 
-In my code, `SentenceTransformer("allenai/specter2_base")` displayed a message saying it created a **mean-pooling fallback**. I therefore used the base model with mean pooling, **not** a task-specific SPECTER2 retrieval adapter. This is an important limitation when judging search quality. The model card recommends using an appropriate adapter for best task-specific performance.
+When I loaded it with SentenceTransformers, I saw:
 
-### Model-card similarity metric and chosen index metric
+```text
+No sentence-transformers model found with name allenai/specter2_base.
+Creating a new one with mean pooling.
+```
 
-The base-model card explains the training and adapter setup, but **does not explicitly prescribe a single Pinecone similarity metric**. I chose **cosine** because I normalized the vectors to unit length, and cosine measures their directional similarity. This choice must agree with the way vectors are generated and compared; different metrics can change rankings for unnormalized vectors.
+So I used the base model with mean pooling, **not** a task-specific retrieval adapter. I think that may be one reason some search results later looked strange.
 
-### 1.3 Embedding generation
+### What about the similarity metric?
 
-For each paper I combined the fields in the required format:
+I used `cosine` for the Pinecone indexes. The base model card does not give me one single required index metric for every adapter/task. In my code I normalized embeddings, so cosine compares vector direction rather than length. The metric matters because Pinecone uses it to decide which papers should appear first.
+
+### 1.3 Creating the embeddings
+
+I combined each title and abstract like this:
 
 ```text
 title + " [SEP] " + abstract
 ```
 
-I encoded the texts in batches of 16, showed a progress bar, and set `normalize_embeddings=True`.
+I used batches of 16 on my Mac and set `normalize_embeddings=True`. I saved the vectors to `embeddings/embeddings.npy`.
 
-Verified terminal results:
+My output:
 
 ```text
 Loaded 10000 articles
-Generating embeddings...
 Batches: 100% | 625/625
 Total embeddings: 10000
 Embedding dimensions: 768
@@ -132,32 +128,27 @@ Embeddings saved to: embeddings/embeddings.npy
 Embedding generation completed!
 ```
 
-**Why does cosine similarity equal dot product for normalized vectors?**
+**Why are cosine similarity and dot product equal here?** Cosine similarity divides the dot product by the lengths of the two vectors. My vectors are normalized, so each length is 1. Dividing by `1 × 1` doesn't change the value. That is why cosine and dot product should rank these vectors in the same order.
 
-Cosine similarity is `a·b / (||a|| ||b||)`. If both vectors have length one, the denominator is one, so cosine similarity is exactly `a·b`. Normalization makes comparison more consistent by removing vector-length differences.
+## Part 2 — Uploading to Pinecone
 
----
+I created the index `arxiv-papers` with **768 dimensions** and **cosine** similarity. I uploaded the embeddings in batches of 200.
 
-## Part 2 — Uploading vectors to Pinecone
+Each vector had an ID like `paper_0` and metadata: arXiv ID, title, first 500 characters of the abstract, first 200 characters of the authors, year, and category. I kept the metadata short to avoid storing too much text in Pinecone. The full abstracts are in the Parquet file.
 
-I created a serverless index called `arxiv-papers` using **768 dimensions** and **cosine similarity**. I uploaded the embeddings in batches of 200. Each vector has an ID such as `paper_0` and metadata: `arxiv_id`, `title`, `abstract` (up to 500 characters), `authors` (up to 200 characters), `year`, and `category`.
-
-The full abstract remains in the local Parquet file. Shortening the abstract in metadata reduces upload/storage size and helps stay within Pinecone metadata limits. It also means full abstracts must be retrieved from the local dataset if needed.
-
-Verified index statistics:
+I checked the index after uploading:
 
 ```text
 Index: arxiv-papers
 Dimension: 768
-Namespace: default
 Total vectors: 10000
 ```
 
----
+The count was correct: **10,000 vectors**.
 
-## Part 3 — Search queries and similarity metrics
+## Part 3 — Searching for papers
 
-### Task 1: Semantic search
+### Semantic search
 
 I searched for:
 
@@ -165,36 +156,38 @@ I searched for:
 teaching machines to recognize objects in pictures
 ```
 
-One top result in the local comparison was **“Capturing knots in polymers”** (cosine score about **0.8294**). Other results included **“Symbolic sensors: one solution to the numerical-symbolic interface”** and **“The Mathematics.”** Some of these results are not closely related to image recognition, even though they receive high similarity scores. My base-model fallback may not be ideal for short search queries; I would test a task-specific ad-hoc search adapter in a future improvement.
+Some of the results were *Capturing knots in polymers*, *Symbolic sensors: one solution to the numerical-symbolic interface*, and *The Mathematics*. For the first paper, the local cosine score was about **0.8294**.
 
-### Task 2: Search with filters
+I expected more papers about image recognition. The script worked, but I would not call all these results good matches. My model setup used mean pooling without the retrieval adapter, and the dataset was also a limited older sample.
 
-I searched for reinforcement learning with a `cs.LG` category filter and a recent publication-year filter (2022 onward). The result was:
+### Search with filters
+
+I tried a search for reinforcement learning in category `cs.LG` from **2022 onward**. It returned:
 
 ```text
 TASK 2A: RECENT REINFORCEMENT LEARNING
 No matching articles found.
 ```
 
-This makes sense because I took the **first 10,000 records from 2007**, not a sample of newer research. It does not prove Pinecone filtering is broken.
+This makes sense because the first 10,000 papers I selected were from 2007. The filter cannot return articles that are not in the index.
 
-For older papers (before 2015), the query returned results including:
+I also searched for papers before 2015. That search did return results:
 
-| Rank | Paper | Category | Year | Score |
-|---|---|---|---:|---:|
-| 1 | Multi-Agent Modeling Using Intelligent Agents in the Game of Lerpa | cs.MA | 2007 | 0.8682 |
-| 2 | Introduction to Phase Transitions in Random Optimization Problems | cond-mat.stat-mech | 2007 | 0.8359 |
-| 3 | Architecture for Pseudo Acausal Evolvable Embedded Systems | cs.NE | 2007 | 0.8237 |
-| 4 | A Study in a Hybrid Centralised-Swarm Agent Community | cs.NE | 2007 | 0.8200 |
-| 5 | Why only few are so successful? | physics.pop-ph | 2007 | 0.8169 |
+| # | Paper | Year | Score |
+|---|---|---:|---:|
+| 1 | Multi-Agent Modeling Using Intelligent Agents in the Game of Lerpa | 2007 | 0.8682 |
+| 2 | Introduction to Phase Transitions in Random Optimization Problems | 2007 | 0.8359 |
+| 3 | Architecture for Pseudo Acausal Evolvable Embedded Systems | 2007 | 0.8237 |
+| 4 | A Study in a Hybrid Centralised-Swarm Agent Community | 2007 | 0.8200 |
+| 5 | Why only few are so successful? | 2007 | 0.8169 |
 
-The filtered results depend on both the query text and metadata conditions. A recent-paper comparison would require a dataset sampled across multiple years.
+The old-paper filter works, but I can't really compare old and recent papers using this subset.
 
-### Task 3: Local metric comparison
+### Cosine, dot product, and L2 distance
 
-For the image-recognition query, the top five papers were **in the same order** for cosine, dot product, and L2 distance:
+I compared the three metrics locally using the same query and saved embeddings:
 
-| Rank | Paper | Cosine | Dot product | L2 distance |
+| # | Paper | Cosine | Dot product | L2 distance |
 |---|---|---:|---:|---:|
 | 1 | Capturing knots in polymers | 0.8294 | 0.8294 | 0.5842 |
 | 2 | Symbolic sensors: one solution to the numerical-symbolic interface | 0.8260 | 0.8260 | 0.5899 |
@@ -207,92 +200,91 @@ Cosine vs Dot same ranking: True
 Cosine vs L2 same ranking: True
 ```
 
-**Why did cosine and dot agree?** All vectors were normalized, so cosine is the dot product.
+**Did cosine and dot give the same top 5?** Yes. All the vectors were normalized, so cosine and dot product measure the same thing here.
 
-**Why did L2 also agree?** For unit vectors, `||a-b||² = 2 - 2(a·b)`. Smaller L2 distances therefore correspond to larger cosine similarities. These are different score scales but the same ordering (except possible numerical ties).
+**Was L2 different?** The numbers were different, but the ranking was the same. For unit-length vectors, a higher cosine similarity means a shorter L2 distance. For L2, the smallest number is the best result.
 
-**What if vectors were not normalized?** The dot product would depend on both direction and magnitude. L2 would also include length differences, so the three rankings could differ. Normalizing both document and query vectors avoids this issue.
+**What if I did not normalize?** The vector lengths could affect dot product and L2, and the ranking could change. Cosine still compares vector direction for nonzero vectors.
 
----
+## Part 4 — Chunking
 
-## Part 4 — Fixed-size and sentence-grouped chunking
+I took the 30 papers with the longest abstracts and tried two ways of splitting them:
 
-I selected the **30 longest abstracts** and tested two strategies:
+- **Fixed-size:** 120 words per chunk, with 25 words repeated from the previous chunk.
+- **Sentence-grouped:** keep whole sentences together until the chunk is about 120 words. Very long sentences sometimes still need to be split.
 
-- **Fixed-size:** 120 words per chunk with a 25-word overlap.
-- **Sentence-grouped (semantic):** build chunks from complete sentences, keeping chunks near a 120-word maximum. Very long single sentences may still be split. This is a simple sentence-boundary method, not an embedding-based semantic-boundary algorithm.
+My second method keeps sentence boundaries, but it is a simple sentence-grouping approach, not a special embedding-based semantic chunker.
 
-I embedded each chunk with the same model and uploaded the results to separate Pinecone indexes.
-
-Verified vector counts:
+I uploaded the chunks to two Pinecone indexes. These were the counts I checked:
 
 | Index | Vectors |
 |---|---:|
-| `arxiv-chunks-fixed` | **94** |
-| `arxiv-chunks-semantic` | **92** |
+| `arxiv-chunks-fixed` | 94 |
+| `arxiv-chunks-semantic` | 92 |
 
-I tested the query **“quantum physics and particles.”** Both strategies ranked *Spin Effects in Quantum Chromodynamics and Recurrence Lattices with Multi-Site Exchanges* first. The top scores were **0.8400** for fixed-size and **0.8398** for sentence-grouped chunks. Both also returned *Conjectures on exact solution of three-dimensional simple orthorhombic Ising lattices*.
+For **“quantum physics and particles”**, both methods returned *Spin Effects in Quantum Chromodynamics and Recurrence Lattices with Multi-Site Exchanges* first. The top scores were **0.8400** for fixed-size and **0.8398** for sentence-grouped.
 
-**Which chunks are more meaningful?** Sentence-grouped chunks usually read better because they try to preserve complete sentences. The fixed-size method is simpler and gives more predictable chunk lengths. In my small test, neither method clearly performed better in relevance: the best matches and scores were very close.
+**Which chunks make more sense?** I prefer sentence-grouped chunks for reading because they usually keep the full sentence. But in this small search test, it did not clearly improve the top score or result.
 
-**Are sentences cut?** Fixed-size chunks can start or end in the middle of a sentence. That may remove context and reduce the usefulness of an embedding. The sentence-grouped approach reduces this problem, although exceptionally long sentences still need to be split.
+**Can a sentence get cut?** Yes. Fixed-size chunks can cut a sentence in the middle. Then part of the meaning may be in the next chunk. Sentence grouping avoids most of that, except when one sentence is already too long.
 
-**How does overlap affect the result?** Overlap repeats words between neighboring fixed chunks so important context around a boundary is less likely to be lost. More overlap gives more chunks, greater storage and embedding cost, and more duplicate results. Too little overlap risks missing context.
-
----
+**What does overlap change?** Overlap helps keep information around the border of two chunks. More overlap can help with context, but it also creates more chunks and uses more storage. Similar chunks may also show up repeatedly in search results.
 
 ## Part 5 — Optional hybrid search
 
-Not implemented. This part was marked optional and ungraded in the final grading criteria provided for this assignment.
+I didn't implement BM25 + vector hybrid search because this part was optional in the final grading table.
 
----
+## Part 6 — My answers and conclusions
 
-## Part 6 — Analysis and conclusions
+### 1. Semantic search vs keyword search
 
-### 1. Semantic search versus keyword search
+Semantic search is useful when I know what I want to find but don't know the exact words in a paper. It tries to match meaning, not just the same keywords. In my test, it also returned some papers that didn't look relevant, so it is not perfect. For exact author names, IDs, or specific technical terms, I would choose keyword search like BM25. For general topics, I would start with semantic search. I didn't run BM25 in this homework, so this is a reasoned comparison, not a benchmark.
 
-Semantic search is useful when the user describes an idea in different words from the paper's title or abstract. It can connect related concepts without exact keyword matches. Keyword search such as BM25 can be better for exact author names, rare technical terms, formulas, identifiers, and acronyms. In my results, some semantically similar articles were not truly relevant to image recognition. My rule would be: start with semantic search for meaning, use keywords when exact words matter, and consider hybrid search if both types of relevance are important. I did not implement BM25 in this homework, so this is a reasoned comparison rather than a measured BM25 benchmark.
+### 2. Does chunk size matter?
 
-### 2. Impact of chunk size
+I think it does. A chunk of only **10–15 words** might be missing the context needed to understand an idea. A chunk with **500+ words** may mix different topics, and some of it could be cut off by the model's token limit. I used 120 words as a practical starting point, but the best size depends on the texts and the questions. I would test more than one size in a bigger project.
 
-A very short chunk of 10–15 words may lack the context needed to understand the scientific idea. It can match individual phrases but lose the methods or conclusions around them. A very large chunk of more than 500 words may cover several topics and dilute the relevance of any one section; it may also exceed the model's token limit and be truncated. There is no single best word count for every dataset. I used 120 words as a practical starting point. A better choice would be tested against real search queries, relevant-answer judgments, and the model's token limit.
+### 3. What if I used Euclidean distance instead of cosine?
 
-### 3. What if Pinecone used Euclidean distance for normalized vectors?
-
-For vectors `a` and `b`, squared Euclidean distance is:
+The formula for squared L2 distance is:
 
 ```text
-||a-b||² = ||a||² + ||b||² - 2(a·b)
+||a - b||² = ||a||² + ||b||² - 2(a · b)
 ```
 
-When both are unit vectors, `||a|| = ||b|| = 1`, so:
+If both vectors have length 1, then `||a||² = ||b||² = 1`, and cosine similarity is equal to the dot product. So:
 
 ```text
-||a-b||² = 2 - 2(a·b) = 2 - 2 cosine(a,b)
+||a - b||² = 2 - 2 cosine(a, b)
 ```
 
-Therefore minimizing Euclidean distance is equivalent to maximizing cosine similarity for these normalized vectors. The **rankings would be the same in exact arithmetic**, although Pinecone scores would have different meanings and approximate search or floating-point effects could produce small differences. Euclidean distance is not automatically a bad choice here, but using cosine keeps the scores easier to interpret as cosine similarities.
+When cosine similarity gets larger, L2 distance gets smaller. This means **normalized vectors have the same ranking with cosine and L2 in exact math**, even though the score values are different. Pinecone could still show small differences because of approximate search or rounding. Euclidean would not automatically be wrong for my vectors, but I used cosine consistently in this homework.
 
-### 4. Pinecone Starter limits and a larger dataset
+### 4. Pinecone Starter limits and 10 million papers
 
-I successfully created **three** indexes and stored **10,186** vectors in total (10,000 papers + 94 fixed chunks + 92 sentence-grouped chunks). I did not encounter an index-count limit during this run. Pinecone's current published Starter plan includes limits on index count, storage, reads, writes, and other usage; these can change, so I would check the dashboard and pricing documentation before scaling.
+I didn't hit an index limit: I created all three indexes and checked the vector counts.
 
-For **10 million papers**, I would not assume the free tier is enough. I would estimate the raw vector storage first: `10,000,000 × 768 × 4 bytes ≈ 30.7 GB` for float32 values alone, before metadata, indexing overhead, or extra chunk vectors. I would also consider embedding computation cost, batch ingestion, monitoring, retrieval quality, and a paid/scalable deployment. I could reduce metadata stored with each vector and keep complete abstracts in separate object storage, looking them up by arXiv ID.
+```text
+arxiv-papers: 10000
+arxiv-chunks-fixed: 94
+arxiv-chunks-semantic: 92
+Total: 10186 vectors
+```
 
----
+For a real project, I would check the current Starter limits and costs before uploading more data. With **10 million papers**, I would need more storage and processing resources. The raw 768-dimensional float32 embeddings alone would take about **30.7 GB** (`10,000,000 × 768 × 4 bytes`), before metadata or database overhead. I would use batch uploads, store long abstracts separately, and monitor costs. I would also need a suitable paid plan or another way to deploy a vector database.
 
-## Terminal output evidence
+## Results saved from my terminal
 
-The homework requests terminal output or screenshots for each required script. The verified excerpts currently recorded are below. **Before submission, add terminal screenshots or the remaining actual output for scripts 01, 03, 04, and 05 where useful; do not invent missing lines.**
+These are the results I recorded while running the scripts. The homework also asks for terminal evidence for each step. I should include screenshots of the full outputs if the mentor needs more detail.
 
-### Script 01 — Prepare data
+**01 — Data preparation**
 
 ```text
 Example article: {'id': '0704.0001', ..., 'year': 2007, 'category': 'hep-ph'}
 Saved to: data/arxiv_subset.parquet
 ```
 
-### Script 02 — Embeddings
+**02 — Embeddings**
 
 ```text
 Loaded 10000 articles
@@ -304,15 +296,15 @@ Embeddings saved to: embeddings/embeddings.npy
 Embedding generation completed!
 ```
 
-### Script 03 — Pinecone upload
+**03 — Pinecone index check**
 
 ```text
 Index: arxiv-papers
-Total vectors: 10000
 Dimension: 768
+Total vectors: 10000
 ```
 
-### Script 04 — Semantic search
+**04 — Search**
 
 ```text
 TASK 2A: RECENT REINFORCEMENT LEARNING
@@ -321,7 +313,7 @@ Cosine vs Dot same ranking: True
 Cosine vs L2 same ranking: True
 ```
 
-### Script 05 — Chunking
+**05 — Chunking and Pinecone index check**
 
 ```text
 arxiv-papers : 10000 vectors
@@ -332,13 +324,9 @@ Chunking completed!
 
 ## References
 
-- [Cornell University arXiv dataset](https://www.kaggle.com/datasets/Cornell-University/arxiv)
+- [Cornell arXiv dataset](https://www.kaggle.com/datasets/Cornell-University/arxiv)
 - [SPECTER2 base model card](https://huggingface.co/allenai/specter2_base)
-- [SPECTER2 repository and adapter guidance](https://github.com/allenai/SPECTER2)
-- [Pinecone pricing and Starter plan](https://www.pinecone.io/pricing/)
-- [Qdrant open-source repository](https://github.com/qdrant/qdrant)
-- [Chroma open-source repository](https://github.com/chroma-core/chroma)
-
-## Final reflection
-
-This homework helped me understand how to turn scientific texts into vectors, store them in Pinecone, and retrieve articles by meaning rather than exact words. I also learned that the dataset sample and model setup matter as much as the search code. The first 10,000 papers were all from 2007, so filtering for recent work produced no results. With normalized vectors, cosine, dot product, and L2 returned the same ranking. Comparing the two chunking approaches showed similar results in a small test, so I would need more queries and relevance checks before claiming either approach is better.
+- [SPECTER2 documentation](https://github.com/allenai/SPECTER2)
+- [Pinecone plans](https://www.pinecone.io/pricing/)
+- [Qdrant](https://github.com/qdrant/qdrant)
+- [Chroma](https://github.com/chroma-core/chroma)
